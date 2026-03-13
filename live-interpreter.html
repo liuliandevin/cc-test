@@ -133,6 +133,47 @@
     .lang-arrow { color: var(--t3); font-size: 13px; }
     .lang-swap  { color: var(--accent2); font-size: 14px; margin-left: 2px; }
 
+    /* accent/dialect select */
+    .accent-select {
+      background: var(--bg2);
+      color: var(--t2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 5px 26px 5px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235a5a7a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 9px center;
+      transition: background-color .18s, border-color .18s;
+    }
+    .accent-select:hover  { background-color: var(--bg3); border-color: var(--accent); }
+    .accent-select option { background: var(--bg2); color: var(--t1); }
+
+    /* confidence badge */
+    .conf-badge {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--t3);
+      background: rgba(255,255,255,.04);
+      border-radius: 4px;
+      padding: 1px 5px;
+      white-space: nowrap;
+    }
+    .conf-badge.low {
+      color: var(--amber);
+      background: rgba(245,158,11,.10);
+    }
+    .conf-warn {
+      font-size: 10px;
+      color: var(--amber);
+      margin-left: 3px;
+      opacity: .85;
+    }
+
     /* ── TRANSCRIPT ─────────────────────────────────────── */
     .transcript-wrap {
       flex: 1;
@@ -204,6 +245,9 @@
     }
 
     .entry-dir {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       font-size: 9px;
       font-weight: 600;
       color: var(--t3);
@@ -365,6 +409,9 @@
     <span class="lang-swap">⇄</span>
   </div>
 
+  <!-- accent / dialect selector -->
+  <select class="accent-select" id="accentSelect" onchange="onAccentChange()" title="口音 / 方言"></select>
+
   <button class="btn btn-outline" onclick="clearAll()" title="清空记录">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
       <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
@@ -419,7 +466,21 @@
 ═══════════════════════════════════════ */
 let isRecording  = false;
 let isPaused     = false;
-let srcLang      = 'zh';     // 'zh' | 'en'  — drives both recognition lang and translation direction
+let srcLang      = 'zh';        // 'zh' | 'en'  — drives translation direction
+let accentCode   = 'zh-CN';     // actual BCP-47 tag fed to SpeechRecognition
+
+const ACCENTS = {
+  zh: [
+    { label: '普通话',        code: 'zh-CN' },
+    { label: '粤语',          code: 'zh-HK' },
+  ],
+  en: [
+    { label: 'English (US)',  code: 'en-US' },
+    { label: 'English (UK)',  code: 'en-GB' },
+    { label: 'English (AU)',  code: 'en-AU' },
+    { label: 'English (IN)',  code: 'en-IN' },
+  ],
+};
 
 let recognition  = null;
 let entries      = [];
@@ -471,10 +532,17 @@ function buildRecognition(lang) {
 
 function handleResult(ev) {
   let interim = '', final = '';
+  let confSum = 0, confCount = 0;
+
   for (let i = ev.resultIndex; i < ev.results.length; i++) {
     const res = ev.results[i];
-    if (res.isFinal) final  += res[0].transcript;
-    else             interim += res[0].transcript;
+    if (res.isFinal) {
+      final   += res[0].transcript;
+      // confidence is 0..1; only count when the engine actually provides it (> 0)
+      if (res[0].confidence > 0) { confSum += res[0].confidence; confCount++; }
+    } else {
+      interim += res[0].transcript;
+    }
   }
 
   if (interim) {
@@ -486,24 +554,27 @@ function handleResult(ev) {
 
   if (final.trim()) {
     document.getElementById('interimRow').style.display = 'none';
-    processUtterance(final.trim());
+    // average confidence across final segments; null if engine didn't report any
+    const confidence = confCount > 0 ? confSum / confCount : null;
+    processUtterance(final.trim(), confidence);
   }
 }
 
-function processUtterance(text) {
-  addEntry(text, srcLang);
+function processUtterance(text, confidence) {
+  addEntry(text, srcLang, confidence);
 }
 
 /* ═══════════════════════════════════════
    ENTRY MANAGEMENT
 ═══════════════════════════════════════ */
-async function addEntry(text, detectedSrc) {
+async function addEntry(text, detectedSrc, confidence) {
   const tgt  = detectedSrc === 'zh' ? 'en' : 'zh';
   const pair = detectedSrc === 'zh' ? 'zh|en' : 'en|zh';
   const id   = Date.now() + Math.random();
   const ts   = nowTime();
 
-  const entry = { id, ts, text, srcLang: detectedSrc, tgtLang: tgt, translation: null };
+  const entry = { id, ts, text, srcLang: detectedSrc, tgtLang: tgt,
+                  recLang: accentCode, confidence, translation: null };
   entries.push(entry);
 
   document.getElementById('emptyState').style.display = 'none';
@@ -524,12 +595,18 @@ async function addEntry(text, detectedSrc) {
 }
 
 function renderEntry(entry) {
-  const list = document.getElementById('transcriptList');
+  const list   = document.getElementById('transcriptList');
   const safeId = entry.id.toString().replace('.', '_');
 
-  const dirLabel = entry.srcLang === 'zh'
-    ? '中文 → English'
-    : 'English → 中文';
+  const dirLabel = entry.srcLang === 'zh' ? '中文 → English' : 'English → 中文';
+
+  // confidence badge HTML
+  let confHtml = '';
+  if (entry.confidence !== null && entry.confidence !== undefined) {
+    const pct  = Math.round(entry.confidence * 100);
+    const low  = entry.confidence < 0.7;
+    confHtml = `<span class="conf-badge${low ? ' low' : ''}" title="识别置信度">${pct}%${low ? '<span class="conf-warn">识别可能不准确</span>' : ''}</span>`;
+  }
 
   const div = document.createElement('div');
   div.className = 'entry';
@@ -537,7 +614,7 @@ function renderEntry(entry) {
   div.innerHTML = `
     <div class="entry-ts">${entry.ts}</div>
     <div class="entry-card" onclick="speakEntry('${safeId}')">
-      <div class="entry-dir">${dirLabel}</div>
+      <div class="entry-dir"><span>${dirLabel}</span>${confHtml}</div>
       <div class="entry-orig">${esc(entry.text)}</div>
       <div class="entry-sep"><span class="entry-sep-icon">🌐</span></div>
       <div class="entry-trans loading" id="tr-${safeId}">翻译中…</div>
@@ -587,7 +664,7 @@ function speakEntry(safeId) {
   speakingId = safeId;
 
   const u1 = new SpeechSynthesisUtterance(entry.text);
-  u1.lang  = entry.srcLang === 'zh' ? 'zh-CN' : 'en-US';
+  u1.lang  = entry.recLang || (entry.srcLang === 'zh' ? 'zh-CN' : 'en-US');
   u1.rate  = 0.95;
 
   u1.onend = () => {
@@ -625,7 +702,7 @@ function startRecording() {
     showToast('请使用 Chrome 或 Edge 浏览器');
     return;
   }
-  recognition  = buildRecognition(srcLang === 'zh' ? 'zh-CN' : 'en-US');
+  recognition  = buildRecognition(accentCode);
   isRecording  = true;
   isPaused     = false;
   try { recognition.start(); } catch(_) {}
@@ -644,7 +721,7 @@ function pauseRecording() {
 
 function resumeRecording() {
   isPaused = false;
-  recognition = buildRecognition(srcLang === 'zh' ? 'zh-CN' : 'en-US');
+  recognition = buildRecognition(accentCode);
   try { recognition.start(); } catch(_) {}
   setStatus('active', '正在聆听…');
   updateRecBtn();
@@ -677,18 +754,44 @@ function updateRecBtn() {
 function toggleLang() {
   srcLang = srcLang === 'zh' ? 'en' : 'zh';
   updateLangPill();
-  // If actively recognising, restart with the new language immediately
-  if (isRecording && !isPaused) {
-    try { recognition.stop(); } catch(_) {}          // onend won't restart: recognition will be replaced before it fires
-    recognition = buildRecognition(srcLang === 'zh' ? 'zh-CN' : 'en-US');
-    setTimeout(() => { try { recognition.start(); } catch(_) {} }, 150);
-  }
-  showToast(srcLang === 'zh' ? '已切换：中文 → English（识别语言：zh-CN）' : '已切换：English → 中文（识别语言：en-US）');
+  updateAccentSelect();          // repopulate options for the new source language
+  restartRecognitionIfActive();
+  showToast(srcLang === 'zh'
+    ? `已切换：中文 → English（${accentCode}）`
+    : `已切换：English → 中文（${accentCode}）`);
 }
 
 function updateLangPill() {
   document.getElementById('srcBadge').textContent = srcLang === 'zh' ? '中文' : 'English';
   document.getElementById('dstBadge').textContent = srcLang === 'zh' ? 'English' : '中文';
+}
+
+function updateAccentSelect() {
+  const sel = document.getElementById('accentSelect');
+  sel.innerHTML = '';
+  ACCENTS[srcLang].forEach(a => {
+    const opt = document.createElement('option');
+    opt.value       = a.code;
+    opt.textContent = a.label;
+    sel.appendChild(opt);
+  });
+  // restore accent if it's still valid for this lang, otherwise use first
+  const valid = ACCENTS[srcLang].some(a => a.code === accentCode);
+  accentCode = valid ? accentCode : ACCENTS[srcLang][0].code;
+  sel.value = accentCode;
+}
+
+function onAccentChange() {
+  accentCode = document.getElementById('accentSelect').value;
+  restartRecognitionIfActive();
+  showToast(`口音已切换：${accentCode}`);
+}
+
+function restartRecognitionIfActive() {
+  if (!isRecording || isPaused) return;
+  try { recognition.stop(); } catch(_) {}
+  recognition = buildRecognition(accentCode);
+  setTimeout(() => { try { recognition.start(); } catch(_) {} }, 150);
 }
 
 /* ═══════════════════════════════════════
@@ -707,7 +810,8 @@ function exportTxt() {
   entries.forEach(e => {
     const sl = e.srcLang === 'zh' ? '中文' : 'EN';
     const tl = e.tgtLang === 'zh' ? '中文' : 'EN';
-    lines.push(`[${e.ts}]`);
+    const confStr = e.confidence != null ? ` [置信度 ${Math.round(e.confidence * 100)}%]` : '';
+    lines.push(`[${e.ts}]${confStr}`);
     lines.push(`[${sl}] ${e.text}`);
     lines.push(`[${tl}] ${e.translation ?? '(翻译中…)'}`);
     lines.push('');
@@ -783,6 +887,7 @@ window.addEventListener('load', () => {
     showToast('请使用 Chrome 或 Edge 浏览器');
   }
   updateLangPill();
+  updateAccentSelect();
 });
 </script>
 </body>
