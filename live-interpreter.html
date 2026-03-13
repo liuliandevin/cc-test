@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiveInterp — 实时同声翻译</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg0: #0c0c12;
+      --bg1: #13131e;
+      --bg2: #1c1c2a;
+      --bg3: #252536;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --accent-dim: rgba(99,102,241,.15);
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --t1: #e8e8f2;
+      --t2: #9898b8;
+      --t3: #5a5a7a;
+      --border: #25253a;
+      --trans-color: #a5b4fc;
+      --radius: 14px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                   'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+      background: var(--bg0);
+      color: var(--t1);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── HEADER ─────────────────────────────────────────── */
+    .header {
+      flex-shrink: 0;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .logo {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--accent2);
+      letter-spacing: -.3px;
+      margin-right: auto;
+      white-space: nowrap;
+    }
+    .logo small {
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--t3);
+      margin-left: 6px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 9px;
+      border: 1px solid transparent;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .18s, border-color .18s, opacity .18s;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .btn:disabled { opacity: .4; pointer-events: none; }
+
+    .btn-record {
+      background: var(--accent);
+      color: #fff;
+      min-width: 110px;
+      justify-content: center;
+    }
+    .btn-record:hover { background: #4f46e5; }
+    .btn-record.recording {
+      background: var(--red);
+      animation: pulse-btn 1.8s ease-in-out infinite;
+    }
+    .btn-record.paused { background: var(--amber); color: #000; }
+    .btn-record.paused:hover { background: #d97706; }
+
+    @keyframes pulse-btn {
+      0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.5); }
+      50%      { box-shadow: 0 0 0 7px rgba(239,68,68,.0); }
+    }
+
+    .btn-outline {
+      background: var(--bg2);
+      color: var(--t1);
+      border-color: var(--border);
+    }
+    .btn-outline:hover { background: var(--bg3); }
+
+    /* language toggle pill */
+    .lang-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background .18s;
+      user-select: none;
+    }
+    .lang-pill:hover { background: var(--bg3); }
+    .lang-badge {
+      background: var(--accent);
+      color: #fff;
+      border-radius: 5px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .lang-badge.target { background: var(--bg3); color: var(--accent2); border: 1px solid var(--accent); }
+    .lang-arrow { color: var(--t3); font-size: 13px; }
+    .lang-pill-label { color: var(--t3); font-size: 11px; }
+
+    /* mode toggle */
+    .mode-toggle {
+      display: inline-flex;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 11px;
+    }
+    .mode-btn {
+      padding: 5px 10px;
+      cursor: pointer;
+      color: var(--t2);
+      background: transparent;
+      border: none;
+      font-size: 11px;
+      font-weight: 500;
+      transition: background .15s, color .15s;
+    }
+    .mode-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    /* ── TRANSCRIPT ─────────────────────────────────────── */
+    .transcript-wrap {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 18px 12px;
+      scroll-behavior: smooth;
+    }
+    .transcript-wrap::-webkit-scrollbar { width: 5px; }
+    .transcript-wrap::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 3px; }
+
+    .empty-state {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--t3);
+      gap: 12px;
+    }
+    .empty-icon {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+    }
+    .empty-state h3 { color: var(--t2); font-size: 16px; }
+    .empty-state p  { font-size: 13px; max-width: 280px; line-height: 1.6; }
+
+    .transcript-list { display: flex; flex-direction: column; gap: 14px; }
+
+    /* single entry */
+    .entry {
+      display: flex;
+      gap: 12px;
+      animation: slide-in .28s ease;
+    }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .entry-ts {
+      font-size: 10px;
+      color: var(--t3);
+      white-space: nowrap;
+      padding-top: 6px;
+      min-width: 42px;
+      text-align: right;
+      line-height: 1.4;
+    }
+
+    .entry-card {
+      flex: 1;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 15px;
+      cursor: pointer;
+      transition: border-color .2s, background .2s, box-shadow .2s;
+      position: relative;
+    }
+    .entry-card:hover { border-color: var(--accent); background: var(--bg3); }
+    .entry-card.speaking {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+    }
+
+    .entry-dir {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--t3);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 6px;
+    }
+
+    .entry-orig {
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--t1);
+    }
+
+    .entry-sep {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 9px 0;
+    }
+    .entry-sep::before, .entry-sep::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+    .entry-sep-icon { color: var(--t3); font-size: 11px; }
+
+    .entry-trans {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--trans-color);
+    }
+    .entry-trans.loading { color: var(--t3); font-style: italic; }
+    .entry-trans.error   { color: var(--red); font-style: italic; font-size: 12px; }
+
+    .entry-footer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--t3);
+    }
+    .speak-hint { display: flex; align-items: center; gap: 4px; }
+    .speak-hint svg { width: 11px; height: 11px; }
+
+    /* interim */
+    .interim-row {
+      display: flex;
+      gap: 12px;
+      opacity: .55;
+    }
+    .interim-card {
+      flex: 1;
+      background: var(--bg1);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 10px 15px;
+      font-size: 14px;
+      color: var(--t2);
+      font-style: italic;
+    }
+
+    /* ── FOOTER ─────────────────────────────────────────── */
+    .footer {
+      flex-shrink: 0;
+      background: var(--bg1);
+      border-top: 1px solid var(--border);
+      padding: 8px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--t3);
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    .status-dot.active  { background: var(--green); animation: blink 1.6s ease-in-out infinite; }
+    .status-dot.paused  { background: var(--amber); }
+    .status-dot.error   { background: var(--red); }
+    @keyframes blink {
+      0%,100% { opacity: 1; } 50% { opacity: .3; }
+    }
+
+    .status-text { font-size: 12px; color: var(--t2); }
+
+    /* waveform — pure CSS animation, no getUserMedia needed */
+    .wave {
+      display: none;
+      align-items: flex-end;
+      gap: 2px;
+      height: 18px;
+      margin-left: 4px;
+    }
+    .wave.visible { display: flex; }
+    .wave-bar {
+      width: 3px;
+      border-radius: 2px;
+      background: var(--accent);
+      height: 3px;
+    }
+    .wave.visible .wave-bar {
+      animation: wave-dance 1.1s ease-in-out infinite;
+    }
+    @keyframes wave-dance {
+      0%, 100% { height: 3px; }
+      50%       { height: 15px; }
+    }
+
+    .footer-right { margin-left: auto; font-size: 11px; color: var(--t3); }
+
+    /* ── TOAST ───────────────────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 56px;
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--t1);
+      font-size: 13px;
+      padding: 8px 18px;
+      border-radius: 99px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s, transform .25s;
+      white-space: nowrap;
+      z-index: 100;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── RESPONSIVE ──────────────────────────────────────── */
+    @media (max-width: 560px) {
+      .header { padding: 8px 12px; gap: 7px; }
+      .logo   { font-size: 15px; flex-basis: 100%; }
+      .btn    { padding: 6px 11px; font-size: 12px; }
+      .transcript-wrap { padding: 12px 12px 8px; }
+      .entry-orig { font-size: 14px; }
+      .entry-trans { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo">🎙 LiveInterp <small>实时同声翻译</small></div>
+
+  <!-- auto / manual mode -->
+  <div class="mode-toggle" title="语言检测模式">
+    <button class="mode-btn active" id="modeAuto"   onclick="setMode('auto')">自动检测</button>
+    <button class="mode-btn"        id="modeManual" onclick="setMode('manual')">手动</button>
+  </div>
+
+  <!-- language direction toggle (manual) -->
+  <div class="lang-pill" id="langPill" onclick="toggleLang()" title="点击切换翻译方向">
+    <span class="lang-pill-label">源语言</span>
+    <span class="lang-badge"        id="srcBadge">中文</span>
+    <span class="lang-arrow">→</span>
+    <span class="lang-badge target" id="dstBadge">English</span>
+  </div>
+
+  <button class="btn btn-outline" onclick="clearAll()" title="清空记录">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+      <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+    </svg>
+    清空
+  </button>
+
+  <button class="btn btn-outline" onclick="exportTxt()" title="导出 .txt">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    导出
+  </button>
+
+  <button class="btn btn-record" id="recBtn" onclick="toggleRecord()">
+    <svg id="recIcon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="12" r="6"/>
+    </svg>
+    <span id="recLabel">开始识别</span>
+  </button>
+</header>
+
+<!-- TRANSCRIPT -->
+<main class="transcript-wrap" id="transcriptWrap">
+  <div class="empty-state" id="emptyState">
+    <div class="empty-icon">🎧</div>
+    <h3>准备就绪</h3>
+    <p>点击「开始识别」，用中文或英文说话，每句话将实时翻译并显示在这里</p>
+  </div>
+  <div class="transcript-list" id="transcriptList"></div>
+  <div class="interim-row" id="interimRow" style="display:none">
+    <div class="entry-ts" id="interimTs"></div>
+    <div class="interim-card" id="interimText"></div>
+  </div>
+</main>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="status-dot" id="statusDot"></div>
+  <span class="status-text" id="statusText">就绪 — 请点击开始识别</span>
+  <div class="wave" id="wave"></div>
+  <div class="footer-right" id="countLabel">0 条记录</div>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════
+   STATE
+═══════════════════════════════════════ */
+let isRecording  = false;
+let isPaused     = false;
+let mode         = 'auto';   // 'auto' | 'manual'
+let srcLang      = 'zh';     // 'zh' | 'en'  (manual or last-detected)
+let recLang      = 'zh-CN';  // actual SpeechRecognition lang
+
+let recognition  = null;
+let entries      = [];
+let speakingId   = null;
+
+/* ═══════════════════════════════════════
+   WAVE VISUALISER
+═══════════════════════════════════════ */
+const waveEl  = document.getElementById('wave');
+const NUM_B   = 22;
+const waveBars = [];
+for (let i = 0; i < NUM_B; i++) {
+  const b = document.createElement('div');
+  b.className = 'wave-bar';
+  b.style.animationDelay = (i * 0.05).toFixed(2) + 's';
+  waveEl.appendChild(b);
+  waveBars.push(b);
+}
+
+function startWave() { waveEl.classList.add('visible'); }
+function stopWave()  { waveEl.classList.remove('visible'); }
+
+/* ═══════════════════════════════════════
+   SPEECH RECOGNITION
+═══════════════════════════════════════ */
+function buildRecognition(lang) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const r = new SR();
+  r.continuous      = true;
+  r.interimResults  = true;
+  r.maxAlternatives = 1;
+  r.lang            = lang;
+
+  r.onstart  = () => setStatus('active', '正在聆听…');
+  r.onerror  = e => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    setStatus('error', '识别错误: ' + e.error);
+  };
+  r.onend = () => {
+    // only restart if this instance is still the active one
+    if (isRecording && !isPaused && recognition === r) {
+      setTimeout(() => { try { r.start(); } catch(_) {} }, 120);
+    }
+  };
+  r.onresult = handleResult;
+  return r;
+}
+
+function handleResult(ev) {
+  let interim = '', final = '';
+  for (let i = ev.resultIndex; i < ev.results.length; i++) {
+    const res = ev.results[i];
+    if (res.isFinal) final  += res[0].transcript;
+    else             interim += res[0].transcript;
+  }
+
+  if (interim) {
+    document.getElementById('interimRow').style.display = 'flex';
+    document.getElementById('interimText').textContent   = interim;
+    document.getElementById('interimTs').textContent     = nowTime();
+    scrollBottom();
+  }
+
+  if (final.trim()) {
+    document.getElementById('interimRow').style.display = 'none';
+    processUtterance(final.trim());
+  }
+}
+
+function processUtterance(text) {
+  // Language detection
+  let detected;
+  if (mode === 'auto') {
+    detected = detectLang(text);
+    // If detected language differs from current recognition lang, switch
+    const newRecLang = detected === 'zh' ? 'zh-CN' : 'en-US';
+    if (newRecLang !== recLang) {
+      recLang = newRecLang;
+      restartRecognitionLang();
+    }
+    srcLang = detected;
+    updateLangPill();
+  } else {
+    detected = srcLang;
+  }
+
+  addEntry(text, detected);
+}
+
+function restartRecognitionLang() {
+  if (!recognition) return;
+  try { recognition.stop(); } catch(_) {}
+  recognition = buildRecognition(recLang);
+  if (isRecording && !isPaused) {
+    setTimeout(() => { try { recognition.start(); } catch(_) {} }, 150);
+  }
+}
+
+/* ═══════════════════════════════════════
+   ENTRY MANAGEMENT
+═══════════════════════════════════════ */
+async function addEntry(text, detectedSrc) {
+  const tgt  = detectedSrc === 'zh' ? 'en' : 'zh';
+  const pair = detectedSrc === 'zh' ? 'zh|en' : 'en|zh';
+  const id   = Date.now() + Math.random();
+  const ts   = nowTime();
+
+  const entry = { id, ts, text, srcLang: detectedSrc, tgtLang: tgt, translation: null };
+  entries.push(entry);
+
+  document.getElementById('emptyState').style.display = 'none';
+  renderEntry(entry);
+  updateCount();
+  scrollBottom();
+
+  // translate async
+  try {
+    const result = await translate(text, pair);
+    entry.translation = result;
+    const el = document.getElementById('tr-' + id.toString().replace('.', '_'));
+    if (el) { el.className = 'entry-trans'; el.textContent = result; }
+  } catch(e) {
+    const el = document.getElementById('tr-' + id.toString().replace('.', '_'));
+    if (el) { el.className = 'entry-trans error'; el.textContent = '翻译失败，请检查网络'; }
+  }
+}
+
+function renderEntry(entry) {
+  const list = document.getElementById('transcriptList');
+  const safeId = entry.id.toString().replace('.', '_');
+
+  const dirLabel = entry.srcLang === 'zh'
+    ? '中文 → English'
+    : 'English → 中文';
+
+  const div = document.createElement('div');
+  div.className = 'entry';
+  div.id = 'entry-' + safeId;
+  div.innerHTML = `
+    <div class="entry-ts">${entry.ts}</div>
+    <div class="entry-card" onclick="speakEntry('${safeId}')">
+      <div class="entry-dir">${dirLabel}</div>
+      <div class="entry-orig">${esc(entry.text)}</div>
+      <div class="entry-sep"><span class="entry-sep-icon">🌐</span></div>
+      <div class="entry-trans loading" id="tr-${safeId}">翻译中…</div>
+      <div class="entry-footer">
+        <span class="speak-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+          </svg>
+          点击卡片朗读
+        </span>
+      </div>
+    </div>`;
+  list.appendChild(div);
+}
+
+/* ═══════════════════════════════════════
+   TRANSLATION API
+═══════════════════════════════════════ */
+async function translate(text, pair) {
+  // MyMemory free API limit: ~500 chars per request
+  const chunk = text.slice(0, 480);
+  const url   = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${pair}`;
+  const res   = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const json  = await res.json();
+  if (json.responseStatus === 200 && json.responseData?.translatedText)
+    return json.responseData.translatedText;
+  throw new Error('API error');
+}
+
+/* ═══════════════════════════════════════
+   TTS — SPEAK ENTRY
+═══════════════════════════════════════ */
+function speakEntry(safeId) {
+  const entry = entries.find(e => e.id.toString().replace('.', '_') === safeId);
+  if (!entry) return;
+
+  // stop previous
+  window.speechSynthesis.cancel();
+  document.querySelectorAll('.entry-card.speaking')
+    .forEach(el => el.classList.remove('speaking'));
+
+  const card = document.querySelector(`#entry-${safeId} .entry-card`);
+  if (card) card.classList.add('speaking');
+  speakingId = safeId;
+
+  const u1 = new SpeechSynthesisUtterance(entry.text);
+  u1.lang  = entry.srcLang === 'zh' ? 'zh-CN' : 'en-US';
+  u1.rate  = 0.95;
+
+  u1.onend = () => {
+    if (entry.translation && !entry.translation.includes('翻译失败')) {
+      const u2  = new SpeechSynthesisUtterance(entry.translation);
+      u2.lang   = entry.tgtLang === 'zh' ? 'zh-CN' : 'en-US';
+      u2.rate   = 0.95;
+      u2.onend  = () => {
+        if (card) card.classList.remove('speaking');
+        speakingId = null;
+      };
+      window.speechSynthesis.speak(u2);
+    } else {
+      if (card) card.classList.remove('speaking');
+      speakingId = null;
+    }
+  };
+
+  window.speechSynthesis.speak(u1);
+}
+
+/* ═══════════════════════════════════════
+   RECORDING CONTROLS
+═══════════════════════════════════════ */
+function toggleRecord() {
+  if (!isRecording)       startRecording();
+  else if (!isPaused)     pauseRecording();
+  else                    resumeRecording();
+}
+
+function startRecording() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    setStatus('error', '⚠ 浏览器不支持语音识别，请使用 Chrome 或 Edge');
+    showToast('请使用 Chrome 或 Edge 浏览器');
+    return;
+  }
+  recLang      = srcLang === 'zh' ? 'zh-CN' : 'en-US';
+  recognition  = buildRecognition(recLang);
+  isRecording  = true;
+  isPaused     = false;
+  try { recognition.start(); } catch(_) {}
+  updateRecBtn();
+  startWave();
+}
+
+function pauseRecording() {
+  isPaused = true;
+  try { recognition.stop(); } catch(_) {}
+  document.getElementById('interimRow').style.display = 'none';
+  setStatus('paused', '已暂停');
+  updateRecBtn();
+  stopWave();
+}
+
+function resumeRecording() {
+  isPaused = false;
+  recognition = buildRecognition(recLang);
+  try { recognition.start(); } catch(_) {}
+  setStatus('active', '正在聆听…');
+  updateRecBtn();
+  startWave();
+}
+
+function updateRecBtn() {
+  const btn   = document.getElementById('recBtn');
+  const icon  = document.getElementById('recIcon');
+  const label = document.getElementById('recLabel');
+
+  if (!isRecording) {
+    btn.className   = 'btn btn-record';
+    icon.innerHTML  = '<circle cx="12" cy="12" r="6"/>';
+    label.textContent = '开始识别';
+  } else if (!isPaused) {
+    btn.className   = 'btn btn-record recording';
+    icon.innerHTML  = '<rect x="6" y="6" width="4" height="12"/><rect x="14" y="6" width="4" height="12"/>';
+    label.textContent = '暂停';
+  } else {
+    btn.className   = 'btn btn-record paused';
+    icon.innerHTML  = '<polygon points="5 3 19 12 5 21 5 3"/>';
+    label.textContent = '继续';
+  }
+}
+
+/* ═══════════════════════════════════════
+   LANGUAGE CONTROLS
+═══════════════════════════════════════ */
+function setMode(m) {
+  mode = m;
+  document.getElementById('modeAuto').classList.toggle('active',   m === 'auto');
+  document.getElementById('modeManual').classList.toggle('active', m === 'manual');
+  // manual mode: pill is interactive; auto mode: pill shows detected lang (read-ish)
+  document.getElementById('langPill').style.cursor = m === 'manual' ? 'pointer' : 'default';
+  document.getElementById('langPill').title = m === 'manual'
+    ? '点击切换翻译方向'
+    : '自动检测语言中（切换到「手动」可固定方向）';
+}
+
+function toggleLang() {
+  if (mode !== 'manual') { showToast('请先切换到「手动」模式'); return; }
+  srcLang = srcLang === 'zh' ? 'en' : 'zh';
+  updateLangPill();
+  // update recognition lang if active
+  if (isRecording && !isPaused) {
+    recLang = srcLang === 'zh' ? 'zh-CN' : 'en-US';
+    restartRecognitionLang();
+  }
+}
+
+function updateLangPill() {
+  document.getElementById('srcBadge').textContent = srcLang === 'zh' ? '中文' : 'English';
+  document.getElementById('dstBadge').textContent = srcLang === 'zh' ? 'English' : '中文';
+}
+
+/* ═══════════════════════════════════════
+   EXPORT & CLEAR
+═══════════════════════════════════════ */
+function exportTxt() {
+  if (entries.length === 0) { showToast('暂无记录可导出'); return; }
+
+  const lines = [
+    '实时同声翻译记录 — LiveInterp',
+    `导出时间：${new Date().toLocaleString('zh-CN')}`,
+    '═'.repeat(48),
+    ''
+  ];
+
+  entries.forEach(e => {
+    const sl = e.srcLang === 'zh' ? '中文' : 'EN';
+    const tl = e.tgtLang === 'zh' ? '中文' : 'EN';
+    lines.push(`[${e.ts}]`);
+    lines.push(`[${sl}] ${e.text}`);
+    lines.push(`[${tl}] ${e.translation ?? '(翻译中…)'}`);
+    lines.push('');
+  });
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), {
+    href:     url,
+    download: `翻译记录_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.txt`
+  });
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`已导出 ${entries.length} 条记录`);
+}
+
+function clearAll() {
+  if (entries.length === 0) { showToast('记录已为空'); return; }
+  if (!confirm(`确认清空全部 ${entries.length} 条记录？`)) return;
+  entries = [];
+  document.getElementById('transcriptList').innerHTML = '';
+  document.getElementById('emptyState').style.display = '';
+  document.getElementById('interimRow').style.display = 'none';
+  updateCount();
+  showToast('记录已清空');
+}
+
+/* ═══════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════ */
+function detectLang(text) {
+  const cjk   = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef]/g) || []).length;
+  const total = text.replace(/\s/g, '').length;
+  return total > 0 && cjk / total > 0.25 ? 'zh' : 'en';
+}
+
+function nowTime() {
+  return new Date().toLocaleTimeString('zh-CN', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+
+function setStatus(type, text) {
+  document.getElementById('statusDot').className  = 'status-dot ' + type;
+  document.getElementById('statusText').textContent = text;
+}
+
+function updateCount() {
+  document.getElementById('countLabel').textContent = `${entries.length} 条记录`;
+}
+
+function scrollBottom() {
+  const w = document.getElementById('transcriptWrap');
+  requestAnimationFrame(() => { w.scrollTop = w.scrollHeight; });
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+/* ═══════════════════════════════════════
+   INIT CHECK
+═══════════════════════════════════════ */
+window.addEventListener('load', () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    setStatus('error', '⚠ 浏览器不支持语音识别');
+    document.getElementById('recBtn').disabled = true;
+    showToast('请使用 Chrome 或 Edge 浏览器');
+  }
+  // init lang pill
+  updateLangPill();
+  setMode('auto');
+});
+</script>
+</body>
+</html>
