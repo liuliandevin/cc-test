@@ -131,31 +131,7 @@
     }
     .lang-badge.target { background: var(--bg3); color: var(--accent2); border: 1px solid var(--accent); }
     .lang-arrow { color: var(--t3); font-size: 13px; }
-    .lang-pill-label { color: var(--t3); font-size: 11px; }
-
-    /* mode toggle */
-    .mode-toggle {
-      display: inline-flex;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
-      font-size: 11px;
-    }
-    .mode-btn {
-      padding: 5px 10px;
-      cursor: pointer;
-      color: var(--t2);
-      background: transparent;
-      border: none;
-      font-size: 11px;
-      font-weight: 500;
-      transition: background .15s, color .15s;
-    }
-    .mode-btn.active {
-      background: var(--accent);
-      color: #fff;
-    }
+    .lang-swap  { color: var(--accent2); font-size: 14px; margin-left: 2px; }
 
     /* ── TRANSCRIPT ─────────────────────────────────────── */
     .transcript-wrap {
@@ -381,18 +357,12 @@
 <header class="header">
   <div class="logo">🎙 LiveInterp <small>实时同声翻译</small></div>
 
-  <!-- auto / manual mode -->
-  <div class="mode-toggle" title="语言检测模式">
-    <button class="mode-btn active" id="modeAuto"   onclick="setMode('auto')">自动检测</button>
-    <button class="mode-btn"        id="modeManual" onclick="setMode('manual')">手动</button>
-  </div>
-
-  <!-- language direction toggle (manual) -->
-  <div class="lang-pill" id="langPill" onclick="toggleLang()" title="点击切换翻译方向">
-    <span class="lang-pill-label">源语言</span>
+  <!-- language direction toggle -->
+  <div class="lang-pill" id="langPill" onclick="toggleLang()" title="点击切换识别语言和翻译方向">
     <span class="lang-badge"        id="srcBadge">中文</span>
     <span class="lang-arrow">→</span>
     <span class="lang-badge target" id="dstBadge">English</span>
+    <span class="lang-swap">⇄</span>
   </div>
 
   <button class="btn btn-outline" onclick="clearAll()" title="清空记录">
@@ -424,7 +394,7 @@
   <div class="empty-state" id="emptyState">
     <div class="empty-icon">🎧</div>
     <h3>准备就绪</h3>
-    <p>点击「开始识别」，用中文或英文说话，每句话将实时翻译并显示在这里</p>
+    <p>先选好翻译方向（中→英 或 英→中），再点击「开始识别」说话，每句话将实时翻译并显示在这里</p>
   </div>
   <div class="transcript-list" id="transcriptList"></div>
   <div class="interim-row" id="interimRow" style="display:none">
@@ -449,9 +419,7 @@
 ═══════════════════════════════════════ */
 let isRecording  = false;
 let isPaused     = false;
-let mode         = 'auto';   // 'auto' | 'manual'
-let srcLang      = 'zh';     // 'zh' | 'en'  (manual or last-detected)
-let recLang      = 'zh-CN';  // actual SpeechRecognition lang
+let srcLang      = 'zh';     // 'zh' | 'en'  — drives both recognition lang and translation direction
 
 let recognition  = null;
 let entries      = [];
@@ -523,32 +491,7 @@ function handleResult(ev) {
 }
 
 function processUtterance(text) {
-  // Language detection
-  let detected;
-  if (mode === 'auto') {
-    detected = detectLang(text);
-    // If detected language differs from current recognition lang, switch
-    const newRecLang = detected === 'zh' ? 'zh-CN' : 'en-US';
-    if (newRecLang !== recLang) {
-      recLang = newRecLang;
-      restartRecognitionLang();
-    }
-    srcLang = detected;
-    updateLangPill();
-  } else {
-    detected = srcLang;
-  }
-
-  addEntry(text, detected);
-}
-
-function restartRecognitionLang() {
-  if (!recognition) return;
-  try { recognition.stop(); } catch(_) {}
-  recognition = buildRecognition(recLang);
-  if (isRecording && !isPaused) {
-    setTimeout(() => { try { recognition.start(); } catch(_) {} }, 150);
-  }
+  addEntry(text, srcLang);
 }
 
 /* ═══════════════════════════════════════
@@ -682,8 +625,7 @@ function startRecording() {
     showToast('请使用 Chrome 或 Edge 浏览器');
     return;
   }
-  recLang      = srcLang === 'zh' ? 'zh-CN' : 'en-US';
-  recognition  = buildRecognition(recLang);
+  recognition  = buildRecognition(srcLang === 'zh' ? 'zh-CN' : 'en-US');
   isRecording  = true;
   isPaused     = false;
   try { recognition.start(); } catch(_) {}
@@ -702,7 +644,7 @@ function pauseRecording() {
 
 function resumeRecording() {
   isPaused = false;
-  recognition = buildRecognition(recLang);
+  recognition = buildRecognition(srcLang === 'zh' ? 'zh-CN' : 'en-US');
   try { recognition.start(); } catch(_) {}
   setStatus('active', '正在聆听…');
   updateRecBtn();
@@ -732,26 +674,16 @@ function updateRecBtn() {
 /* ═══════════════════════════════════════
    LANGUAGE CONTROLS
 ═══════════════════════════════════════ */
-function setMode(m) {
-  mode = m;
-  document.getElementById('modeAuto').classList.toggle('active',   m === 'auto');
-  document.getElementById('modeManual').classList.toggle('active', m === 'manual');
-  // manual mode: pill is interactive; auto mode: pill shows detected lang (read-ish)
-  document.getElementById('langPill').style.cursor = m === 'manual' ? 'pointer' : 'default';
-  document.getElementById('langPill').title = m === 'manual'
-    ? '点击切换翻译方向'
-    : '自动检测语言中（切换到「手动」可固定方向）';
-}
-
 function toggleLang() {
-  if (mode !== 'manual') { showToast('请先切换到「手动」模式'); return; }
   srcLang = srcLang === 'zh' ? 'en' : 'zh';
   updateLangPill();
-  // update recognition lang if active
+  // If actively recognising, restart with the new language immediately
   if (isRecording && !isPaused) {
-    recLang = srcLang === 'zh' ? 'zh-CN' : 'en-US';
-    restartRecognitionLang();
+    try { recognition.stop(); } catch(_) {}          // onend won't restart: recognition will be replaced before it fires
+    recognition = buildRecognition(srcLang === 'zh' ? 'zh-CN' : 'en-US');
+    setTimeout(() => { try { recognition.start(); } catch(_) {} }, 150);
   }
+  showToast(srcLang === 'zh' ? '已切换：中文 → English（识别语言：zh-CN）' : '已切换：English → 中文（识别语言：en-US）');
 }
 
 function updateLangPill() {
@@ -806,12 +738,6 @@ function clearAll() {
 /* ═══════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════ */
-function detectLang(text) {
-  const cjk   = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\uff00-\uffef]/g) || []).length;
-  const total = text.replace(/\s/g, '').length;
-  return total > 0 && cjk / total > 0.25 ? 'zh' : 'en';
-}
-
 function nowTime() {
   return new Date().toLocaleTimeString('zh-CN', {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
@@ -856,9 +782,7 @@ window.addEventListener('load', () => {
     document.getElementById('recBtn').disabled = true;
     showToast('请使用 Chrome 或 Edge 浏览器');
   }
-  // init lang pill
   updateLangPill();
-  setMode('auto');
 });
 </script>
 </body>
